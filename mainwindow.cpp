@@ -4,15 +4,16 @@
 #include <QDebug>
 #include <QImage>
 #include <QPixmap>
+#include <QUdpSocket> // Include QUdpSocket for UDP communication
 #include <XInput.h>
-
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow),
     cap(),
     videoTimer(new QTimer(this)),
-    controllerTimer(new QTimer(this))
+    controllerTimer(new QTimer(this)),
+    udpSocket(new QUdpSocket(this)) // Initialize UDP socket
 {
     ui->setupUi(this);
 
@@ -29,36 +30,17 @@ MainWindow::MainWindow(QWidget *parent) :
 
     // Set up controller input timer
     connect(controllerTimer, SIGNAL(timeout()), this, SLOT(readXboxController()));
-
-    // Initialize Winsock
-    WSADATA wsaData;
-    int result = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (result != 0) {
-        qDebug() << "WSAStartup failed with error:" << result;
-        return;
-    }
-
-    // Create UDP socket
-    udpSocket = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (udpSocket == INVALID_SOCKET) {
-        qDebug() << "Socket creation failed with error:" << WSAGetLastError();
-        WSACleanup();
-        return;
-    }
-
-    // Set up UDP address
-    udpAddress.sin_family = AF_INET;
-    udpAddress.sin_port = htons(12345); // Change to the appropriate port
-    udpAddress.sin_addr.s_addr = inet_addr("127.0.0.1"); // Change to the appropriate address
-
     controllerTimer->start(30);
+
+    // Bind UDP socket to any available port
+    if (!udpSocket->bind()) {
+        qDebug() << "Error binding UDP socket:" << udpSocket->errorString();
+    }
 }
 
 MainWindow::~MainWindow()
 {
     stopCamera();
-    closesocket(udpSocket);
-    WSACleanup();
     delete ui;
 }
 
@@ -113,7 +95,13 @@ void MainWindow::readXboxController()
     DWORD result = XInputGetState(0, &controllerState); // Assuming controller 0
     if (result == ERROR_SUCCESS) {
         processControllerInput();
-        controllerStatusLabel->setText("Xbox controller FOUND");
+
+        // Send buttonStatus via UDP
+        QByteArray datagram = buttonStatus.join("\n").toUtf8();
+        QHostAddress remoteAddress("192.168.34.244"); // Example IP address
+        quint16 remotePort = 10011; // Example port number
+
+        udpSocket->writeDatagram(datagram, remoteAddress, remotePort);
     } else {
         controllerStatusLabel->setText("Xbox controller not found or not connected");
     }
@@ -122,7 +110,7 @@ void MainWindow::readXboxController()
 void MainWindow::processControllerInput()
 {
     XINPUT_GAMEPAD* pad = &controllerState.Gamepad;
-    QStringList buttonStatus;
+    buttonStatus.clear(); // Clear previous button status
 
     // Check each button individually
     if (pad->wButtons & XINPUT_GAMEPAD_A) {
@@ -190,16 +178,6 @@ void MainWindow::processControllerInput()
     }
     if (pad->sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
         buttonStatus << QString("Right Thumbstick Y: %1").arg(pad->sThumbRY);
-    }
-
-    // Join the button status list into a single string
-    QString statusMessage = buttonStatus.join("; ");
-
-    // Send the button status over UDP
-    QByteArray data = statusMessage.toUtf8();
-    int result = sendto(udpSocket, data.data(), data.size(), 0, (sockaddr*)&udpAddress, sizeof(udpAddress));
-    if (result == SOCKET_ERROR) {
-        qDebug() << "sendto failed with error:" << WSAGetLastError();
     }
 
     // Update the controller status label with the current button presses

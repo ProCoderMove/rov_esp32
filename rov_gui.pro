@@ -1,4 +1,4 @@
-QT += core gui serialport
+QT += core gui network
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -22,6 +22,7 @@ INCLUDEPATH += C:\opencv\build\include
 INCLUDEPATH += C:\serial\include
 INCLUDEPATH += C:\serial\build
 
+LIBS+= -lws2_32
 LIBS += -lxinput
 LIBS += C:\opencv-build\bin\libopencv_core490.dll
 LIBS += C:\opencv-build\bin\libopencv_highgui490.dll

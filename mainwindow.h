@@ -5,11 +5,9 @@
 #include <QMainWindow>
 #include <QTimer>
 #include <opencv2/opencv.hpp>
-#include <winsock2.h>
 #include <windows.h>
 #include <XInput.h>
-#include <QSerialPort>
-#include <ws2tcpip.h>
+#include <QUdpSocket>
 
 QT_BEGIN_NAMESPACE
 namespace Ui { class MainWindow; }
@@ -40,10 +38,9 @@ private:
     QLabel *label2;
     QLabel *controllerStatusLabel;
     XINPUT_STATE controllerState;
-    QSerialPort* COMPORT;
+    QUdpSocket *udpSocket; // UDP socket for sending data
+    QStringList buttonStatus; // Store button status
 
-    SOCKET udpSocket;
-    sockaddr_in udpAddress;
 };
 
 #endif // MAINWINDOW_H

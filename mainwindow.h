@@ -27,13 +27,15 @@ private slots:
     void captureFrame();
     void readXboxController();
     void processControllerInput();
-
-
+    void readESP();
+    void sendThrusterData();
+    void resetThrusterValues();
 private:
     Ui::MainWindow *ui;
     cv::VideoCapture cap;
     QTimer *videoTimer;
     QTimer *controllerTimer;
+    QTimer *udpTimer;
     QLabel *label1;
     QLabel *label2;
     QLabel *controllerStatusLabel;

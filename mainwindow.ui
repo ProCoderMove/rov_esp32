@@ -88,14 +88,14 @@
      </widget>
     </item>
     <item>
-     <widget class="QLabel" name="label_3">
+     <widget class="QLabel" name="Temperature">
       <property name="text">
        <string>Temperature</string>
       </property>
      </widget>
     </item>
     <item>
-     <widget class="QLabel" name="label_4">
+     <widget class="QLabel" name="Pressure">
       <property name="text">
        <string>Pressure</string>
       </property>
@@ -104,7 +104,7 @@
     <item>
      <widget class="QLabel" name="label_5">
       <property name="text">
-       <string>Humidity</string>
+       <string>imu </string>
       </property>
      </widget>
     </item>

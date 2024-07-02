@@ -4,8 +4,19 @@
 #include <QDebug>
 #include <QImage>
 #include <QPixmap>
-#include <QUdpSocket> // Include QUdpSocket for UDP communication
+#include <QUdpSocket>
 #include <XInput.h>
+#include <QThread>
+
+int fthruster1 = 1500;
+int fthruster2 = 1500;
+int lthruster = 1500;
+int rthruster = 1500;
+int dthruster1 = 1500;
+int dthruster2 = 1500;
+
+int phdata;
+int tempdata;
 
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
@@ -13,7 +24,8 @@ MainWindow::MainWindow(QWidget *parent) :
     cap(),
     videoTimer(new QTimer(this)),
     controllerTimer(new QTimer(this)),
-    udpSocket(new QUdpSocket(this)) // Initialize UDP socket
+    udpTimer(new QTimer(this)),
+    udpSocket(new QUdpSocket(this))
 {
     ui->setupUi(this);
 
@@ -21,21 +33,23 @@ MainWindow::MainWindow(QWidget *parent) :
     label2 = ui->label_2;
     controllerStatusLabel = ui->label_controller_status;
 
-    // Connect buttons to slots
     connect(ui->pushButton_2, &QPushButton::clicked, this, &MainWindow::startCamera);
     connect(ui->pushButton, &QPushButton::clicked, this, &MainWindow::stopCamera);
 
-    // Set up video timer
     connect(videoTimer, SIGNAL(timeout()), this, SLOT(captureFrame()));
-
-    // Set up controller input timer
     connect(controllerTimer, SIGNAL(timeout()), this, SLOT(readXboxController()));
-    controllerTimer->start(30);
+    controllerTimer->start(170);
 
-    // Bind UDP socket to any available port
-    if (!udpSocket->bind()) {
+    if (!udpSocket->bind(QHostAddress::Any, 10010)) {
         qDebug() << "Error binding UDP socket:" << udpSocket->errorString();
+    } else {
+        qDebug() << "UDP socket bound to port" << udpSocket->localPort();
     }
+
+    connect(udpTimer, SIGNAL(timeout()), this, SLOT(checkForUdpMessages()));
+    udpTimer->start(170);
+
+    connect(udpSocket, SIGNAL(readyRead()), this, SLOT(readESP()));
 }
 
 MainWindow::~MainWindow()
@@ -51,14 +65,13 @@ void MainWindow::startCamera()
         return;
     }
 
-    cap.open("rtsp://admin:admin@192.168.1.10");
+    cap.open(0);
 
     if (!cap.isOpened()) {
         qDebug() << "Error: Could not open RTSP stream";
         return;
     }
 
-    // Start the video timer
     videoTimer->start(30);
 }
 
@@ -69,9 +82,11 @@ void MainWindow::stopCamera()
         return;
     }
 
-    // Stop the video timer
     videoTimer->stop();
     cap.release();
+
+    label1->clear();
+    label2->clear();
 }
 
 void MainWindow::captureFrame()
@@ -92,16 +107,9 @@ void MainWindow::captureFrame()
 
 void MainWindow::readXboxController()
 {
-    DWORD result = XInputGetState(0, &controllerState); // Assuming controller 0
+    DWORD result = XInputGetState(0, &controllerState);
     if (result == ERROR_SUCCESS) {
         processControllerInput();
-
-        // Send buttonStatus via UDP
-        QByteArray datagram = buttonStatus.join("\n").toUtf8();
-        QHostAddress remoteAddress("192.168.34.244"); // Example IP address
-        quint16 remotePort = 10011; // Example port number
-
-        udpSocket->writeDatagram(datagram, remoteAddress, remotePort);
     } else {
         controllerStatusLabel->setText("Xbox controller not found or not connected");
     }
@@ -110,9 +118,8 @@ void MainWindow::readXboxController()
 void MainWindow::processControllerInput()
 {
     XINPUT_GAMEPAD* pad = &controllerState.Gamepad;
-    buttonStatus.clear(); // Clear previous button status
+    buttonStatus.clear();
 
-    // Check each button individually
     if (pad->wButtons & XINPUT_GAMEPAD_A) {
         buttonStatus << "Button A pressed";
     }
@@ -144,7 +151,6 @@ void MainWindow::processControllerInput()
         buttonStatus << "Right Thumbstick pressed";
     }
 
-    // Check D-pad directions
     if (pad->wButtons & XINPUT_GAMEPAD_DPAD_UP) {
         buttonStatus << "DPad Up pressed";
     }
@@ -158,7 +164,6 @@ void MainWindow::processControllerInput()
         buttonStatus << "DPad Right pressed";
     }
 
-    // Check left and right triggers
     if (pad->bLeftTrigger > XINPUT_GAMEPAD_TRIGGER_THRESHOLD) {
         buttonStatus << "Left Trigger pressed";
     }
@@ -166,21 +171,73 @@ void MainWindow::processControllerInput()
         buttonStatus << "Right Trigger pressed";
     }
 
-    // Check thumbstick positions
+    bool thumbstickMoved = false;
+
     if (pad->sThumbLX < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || pad->sThumbLX > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) {
+        fthruster1 = 1500 + pad->sThumbLX;
+        fthruster2 = 1500 - pad->sThumbLX;
         buttonStatus << QString("Left Thumbstick X: %1").arg(pad->sThumbLX);
+        thumbstickMoved = true;
     }
     if (pad->sThumbLY < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || pad->sThumbLY > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) {
+        dthruster1 = 1500 + pad->sThumbLY;
+        dthruster2 = 1500 - pad->sThumbLY;
         buttonStatus << QString("Left Thumbstick Y: %1").arg(pad->sThumbLY);
+        thumbstickMoved = true;
     }
     if (pad->sThumbRX < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRX > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
+        rthruster = 1500 + pad->sThumbRX;
+        lthruster = 1500 - pad->sThumbRX;
         buttonStatus << QString("Right Thumbstick X: %1").arg(pad->sThumbRX);
+        thumbstickMoved = true;
     }
     if (pad->sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
         buttonStatus << QString("Right Thumbstick Y: %1").arg(pad->sThumbRY);
+        thumbstickMoved = true;
     }
 
-    // Update the controller status label with the current button presses
-    controllerStatusLabel->setText(buttonStatus.join("\n"));
-    qDebug() << buttonStatus;
+    if (!thumbstickMoved) {
+        resetThrusterValues();
+    }
+
+    sendThrusterData();
+}
+
+void MainWindow::resetThrusterValues()
+{
+    fthruster1 = 1500;
+    fthruster2 = 1500;
+    lthruster = 1500;
+    rthruster = 1500;
+    dthruster1 = 1500;
+    dthruster2 = 1500;
+}
+
+void MainWindow::sendThrusterData()
+{
+    QString data = QString("%1/%2/%3/%4/%5/%6")
+                       .arg(fthruster1)
+                       .arg(fthruster2)
+                       .arg(lthruster)
+                       .arg(rthruster)
+                       .arg(dthruster1)
+                       .arg(dthruster2);
+    qDebug() << data;
+    QByteArray byteArray = data.toUtf8();
+    udpSocket->writeDatagram(byteArray, QHostAddress("192.168.118.140"), 10011);
+}
+
+void MainWindow::readESP()
+{
+    while (udpSocket->hasPendingDatagrams()) {
+        QByteArray datagram;
+        datagram.resize(int(udpSocket->pendingDatagramSize()));
+        udpSocket->readDatagram(datagram.data(), datagram.size());
+
+        QString message = QString::fromUtf8(datagram);
+
+        QMetaObject::invokeMethod(this, [this, message]() {
+                controllerStatusLabel->setText(message);
+            }, Qt::QueuedConnection);
+    }
 }

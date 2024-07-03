@@ -1,4 +1,0 @@
-#ifndef ENHANCEDWINDOW_H
-#define ENHANCEDWINDOW_H
-
-#endif // ENHANCEDWINDOW_H

@@ -65,7 +65,7 @@ void MainWindow::startCamera()
         return;
     }
 
-    cap.open(0);
+    cap.open("rtsp://admin:admin@192.168.1.10");
 
     if (!cap.isOpened()) {
         qDebug() << "Error: Could not open RTSP stream";
@@ -178,29 +178,33 @@ void MainWindow::processControllerInput()
         fthruster2 = 1500 - pad->sThumbLX;
         buttonStatus << QString("Left Thumbstick X: %1").arg(pad->sThumbLX);
         thumbstickMoved = true;
+        sendThrusterData();
     }
     if (pad->sThumbLY < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || pad->sThumbLY > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) {
         dthruster1 = 1500 + pad->sThumbLY;
         dthruster2 = 1500 - pad->sThumbLY;
         buttonStatus << QString("Left Thumbstick Y: %1").arg(pad->sThumbLY);
         thumbstickMoved = true;
+        sendThrusterData();
     }
     if (pad->sThumbRX < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRX > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
         rthruster = 1500 + pad->sThumbRX;
         lthruster = 1500 - pad->sThumbRX;
         buttonStatus << QString("Right Thumbstick X: %1").arg(pad->sThumbRX);
         thumbstickMoved = true;
+        sendThrusterData();
     }
     if (pad->sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
         buttonStatus << QString("Right Thumbstick Y: %1").arg(pad->sThumbRY);
         thumbstickMoved = true;
+        sendThrusterData();
     }
 
-    if (!thumbstickMoved) {
+    if (pad->wButtons & XINPUT_GAMEPAD_A) {
         resetThrusterValues();
+        sendThrusterData();
     }
 
-    sendThrusterData();
 }
 
 void MainWindow::resetThrusterValues()
@@ -224,7 +228,7 @@ void MainWindow::sendThrusterData()
                        .arg(dthruster2);
     qDebug() << data;
     QByteArray byteArray = data.toUtf8();
-    udpSocket->writeDatagram(byteArray, QHostAddress("192.168.118.140"), 10011);
+    udpSocket->writeDatagram(byteArray, QHostAddress("192.168.1.101"), 10011);
 }
 
 void MainWindow::readESP()
@@ -233,6 +237,7 @@ void MainWindow::readESP()
         QByteArray datagram;
         datagram.resize(int(udpSocket->pendingDatagramSize()));
         udpSocket->readDatagram(datagram.data(), datagram.size());
+        // sendThrusterData();
 
         QString message = QString::fromUtf8(datagram);
 

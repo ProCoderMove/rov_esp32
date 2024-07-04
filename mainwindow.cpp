@@ -7,6 +7,10 @@
 #include <QUdpSocket>
 #include <XInput.h>
 #include <QThread>
+#include <iostream>
+#include <algorithm>
+
+using namespace std;
 
 int fthruster1 = 1500;
 int fthruster2 = 1500;
@@ -14,6 +18,8 @@ int lthruster = 1500;
 int rthruster = 1500;
 int dthruster1 = 1500;
 int dthruster2 = 1500;
+
+QString ESP_IP="192.168.1.100";
 
 int phdata;
 int tempdata;
@@ -38,7 +44,7 @@ MainWindow::MainWindow(QWidget *parent) :
 
     connect(videoTimer, SIGNAL(timeout()), this, SLOT(captureFrame()));
     connect(controllerTimer, SIGNAL(timeout()), this, SLOT(readXboxController()));
-    controllerTimer->start(170);
+    controllerTimer->start(100);
 
     if (!udpSocket->bind(QHostAddress::Any, 10010)) {
         qDebug() << "Error binding UDP socket:" << udpSocket->errorString();
@@ -46,8 +52,7 @@ MainWindow::MainWindow(QWidget *parent) :
         qDebug() << "UDP socket bound to port" << udpSocket->localPort();
     }
 
-    connect(udpTimer, SIGNAL(timeout()), this, SLOT(checkForUdpMessages()));
-    udpTimer->start(170);
+    udpTimer->start(100);
 
     connect(udpSocket, SIGNAL(readyRead()), this, SLOT(readESP()));
 }
@@ -115,6 +120,30 @@ void MainWindow::readXboxController()
     }
 }
 
+// Function to map controller input to thruster value
+int mapControllerToThruster(int controllerValue) {
+    // Controller range
+    const int controllerMin = -34268;
+    const int controllerMax = 34018;
+
+    // Thruster range
+    const int thrusterMin = 1200;
+    const int thrusterMax = 1800;
+    const int thrusterNeutral = 1500;
+
+    // Map the controller value to the range [-1, 1]
+    double normalizedValue = (static_cast<double>(controllerValue) - controllerMin) / (controllerMax - controllerMin) * 2 - 1;
+
+    // Map the normalized value to the thruster range
+    int thrusterValue = static_cast<int>((normalizedValue + 1) / 2 * (thrusterMax - thrusterMin) + thrusterMin);
+
+    // Clamp the thruster value to its min and max
+    thrusterValue = max(thrusterMin, min(thrusterValue, thrusterMax));
+
+    return thrusterValue;
+}
+
+
 void MainWindow::processControllerInput()
 {
     XINPUT_GAMEPAD* pad = &controllerState.Gamepad;
@@ -171,40 +200,36 @@ void MainWindow::processControllerInput()
         buttonStatus << "Right Trigger pressed";
     }
 
-    bool thumbstickMoved = false;
+    // bool thumbstickMoved = false;
 
     if (pad->sThumbLX < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || pad->sThumbLX > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) {
-        fthruster1 = 1500 + pad->sThumbLX;
-        fthruster2 = 1500 - pad->sThumbLX;
-        buttonStatus << QString("Left Thumbstick X: %1").arg(pad->sThumbLX);
-        thumbstickMoved = true;
+        fthruster1 = mapControllerToThruster(pad->sThumbLX);
+        fthruster2 = mapControllerToThruster(pad->sThumbLX);
         sendThrusterData();
     }
     if (pad->sThumbLY < -XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE || pad->sThumbLY > XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) {
-        dthruster1 = 1500 + pad->sThumbLY;
-        dthruster2 = 1500 - pad->sThumbLY;
-        buttonStatus << QString("Left Thumbstick Y: %1").arg(pad->sThumbLY);
-        thumbstickMoved = true;
+        dthruster1 = mapControllerToThruster(pad->sThumbLY);
+        dthruster2 = mapControllerToThruster(pad->sThumbLY);
         sendThrusterData();
     }
     if (pad->sThumbRX < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRX > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
-        rthruster = 1500 + pad->sThumbRX;
-        lthruster = 1500 - pad->sThumbRX;
-        buttonStatus << QString("Right Thumbstick X: %1").arg(pad->sThumbRX);
-        thumbstickMoved = true;
+        rthruster = mapControllerToThruster(pad->sThumbRX);
+        lthruster = mapControllerToThruster(pad->sThumbRX);
         sendThrusterData();
     }
-    if (pad->sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
-        buttonStatus << QString("Right Thumbstick Y: %1").arg(pad->sThumbRY);
-        thumbstickMoved = true;
-        sendThrusterData();
-    }
+    // if (pad->sThumbRY < -XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE || pad->sThumbRY > XINPUT_GAMEPAD_RIGHT_THUMB_DEADZONE) {
+    //     sendThrusterData();
+    // }
 
-    if (pad->wButtons & XINPUT_GAMEPAD_A) {
+    // if (pad->wButtons & XINPUT_GAMEPAD_A) {
+    //     resetThrusterValues();
+    //     sendThrusterData();
+    // }
+
+    else{
         resetThrusterValues();
         sendThrusterData();
-    }
-
+        }
 }
 
 void MainWindow::resetThrusterValues()
@@ -228,7 +253,7 @@ void MainWindow::sendThrusterData()
                        .arg(dthruster2);
     qDebug() << data;
     QByteArray byteArray = data.toUtf8();
-    udpSocket->writeDatagram(byteArray, QHostAddress("192.168.1.101"), 10011);
+    udpSocket->writeDatagram(byteArray, QHostAddress(ESP_IP), 10011);
 }
 
 void MainWindow::readESP()
@@ -237,7 +262,6 @@ void MainWindow::readESP()
         QByteArray datagram;
         datagram.resize(int(udpSocket->pendingDatagramSize()));
         udpSocket->readDatagram(datagram.data(), datagram.size());
-        // sendThrusterData();
 
         QString message = QString::fromUtf8(datagram);
 

@@ -36,9 +36,16 @@ private:
     QTimer *videoTimer;
     QTimer *controllerTimer;
     QTimer *udpTimer;
-    QLabel *label1;
-    QLabel *label2;
+    QLabel *camRaw;
+    QLabel *camProc;
     QLabel *controllerStatusLabel;
+    QLabel *tempStatusLabel;
+    QLabel *pressureStatusLabel;
+    QLabel *accStatusLabel;
+    QLabel *gravityStatusLabel;
+    QLabel *gyroStatusLabel;
+    QLabel *magStatusLabel;
+
     XINPUT_STATE controllerState;
     QUdpSocket *udpSocket; // UDP socket for sending data
     QStringList buttonStatus; // Store button status

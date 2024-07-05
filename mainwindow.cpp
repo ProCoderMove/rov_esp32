@@ -24,6 +24,97 @@ QString ESP_IP="192.168.1.100";
 int phdata;
 int tempdata;
 
+
+using namespace cv;
+
+Mat whiteBalance(const Mat& img) {
+    Mat lab;
+    cvtColor(img, lab, COLOR_BGR2Lab);
+
+    vector<Mat> lab_channels;
+    split(lab, lab_channels);
+
+    double avg_a = mean(lab_channels[1])[0];
+    double avg_b = mean(lab_channels[2])[0];
+
+    lab_channels[1] = lab_channels[1] - ((avg_a - 128) * (lab_channels[0] / 255.0) * 1.1);
+    lab_channels[2] = lab_channels[2] - ((avg_b - 128) * (lab_channels[0] / 255.0) * 1.1);
+
+    merge(lab_channels, lab);
+    Mat result;
+    cvtColor(lab, result, COLOR_Lab2BGR);
+
+    return result;
+}
+
+Mat histogramEqualization(const Mat& img) {
+    Mat yuv;
+    cvtColor(img, yuv, COLOR_BGR2YUV);
+
+    vector<Mat> yuv_channels;
+    split(yuv, yuv_channels);
+    equalizeHist(yuv_channels[0], yuv_channels[0]);
+
+    merge(yuv_channels, yuv);
+    Mat result;
+    cvtColor(yuv, result, COLOR_YUV2BGR);
+
+    return result;
+}
+Mat dehaze(const Mat& img) {
+    const float omega = 0.95f; // Added 'f' for consistency with float type
+    const float t_min = 0.1f;  // Added 'f' for consistency with float type
+    const int win_size = 15;
+
+    // Convert to float for accurate division operations
+    Mat img_float;
+    img.convertTo(img_float, CV_32F, 1.0 / 255.0); // Convert to float and normalize to [0, 1]
+
+    // Estimate the dark channel
+    Mat dark_channel(img.size(), CV_32F); // Use CV_32F to match img_float type
+    Mat min_img;
+    erode(img_float, min_img, getStructuringElement(MORPH_RECT, Size(win_size, win_size))); // Use img_float instead of img
+    vector<Mat> channels;
+    split(min_img, channels);
+    dark_channel = min(channels[0], min(channels[1], channels[2])); // Find the minimum across channels
+
+    // Estimate the atmospheric light
+    Mat dilated_img;
+    dilate(img_float, dilated_img, getStructuringElement(MORPH_RECT, Size(win_size, win_size))); // Use img_float instead of img
+    Scalar A = mean(dilated_img); // Calculate mean to get atmospheric light
+
+    // Estimate the transmission map
+    Mat transmission = 1 - omega * (dark_channel / A[0]); // Correct division using A[0]
+    transmission = max(transmission, t_min); // Ensure minimum transmission
+
+    // Recover the scene radiance
+    Mat J = Mat::zeros(img.size(), CV_32FC3); // Use CV_32FC3 for float operations
+    split(img_float, channels); // Use img_float instead of img
+    for (int c = 0; c < 3; c++) {
+        channels[c] = (channels[c] - A[0]) / transmission + A[0]; // Adjust each channel
+    }
+    merge(channels, J); // Merge channels back into an image
+
+    // Clip the values to [0, 1] range
+    J = min(max(J, 0), 1); // Ensure values are within [0, 1]
+
+    // Convert back to 8-bit for display
+    J.convertTo(J, CV_8UC3, 255); // Convert to 8-bit and scale to [0, 255]
+
+    return J;
+}
+
+Mat enhanceUnderwaterFrame(const Mat& frame) {
+    Mat img_wb = whiteBalance(frame);
+    Mat img_he = histogramEqualization(img_wb);
+    Mat img_de = dehaze(img_he);
+    //Mat img_dehazed = dehaze(img_he);
+
+    return img_he;
+}
+
+
+
 MainWindow::MainWindow(QWidget *parent) :
     QMainWindow(parent),
     ui(new Ui::MainWindow),
@@ -35,12 +126,17 @@ MainWindow::MainWindow(QWidget *parent) :
 {
     ui->setupUi(this);
 
-    label1 = ui->label_1;
-    label2 = ui->label_2;
+    camRaw = ui->cam_raw;
+    camProc = ui->cam_proc;
     controllerStatusLabel = ui->label_controller_status;
-
-    connect(ui->pushButton_2, &QPushButton::clicked, this, &MainWindow::startCamera);
-    connect(ui->pushButton, &QPushButton::clicked, this, &MainWindow::stopCamera);
+    tempStatusLabel= ui->label_temp_status;
+    pressureStatusLabel= ui->label_pressure_status;
+    accStatusLabel= ui->label_acc_status;
+    gravityStatusLabel= ui->label_gravity_status;
+    gyroStatusLabel= ui->label_gyro_status;
+    magStatusLabel= ui->label_mag_status;
+    connect(ui->startButton, &QPushButton::clicked, this, &MainWindow::startCamera);
+    connect(ui->stopButton, &QPushButton::clicked, this, &MainWindow::stopCamera);
 
     connect(videoTimer, SIGNAL(timeout()), this, SLOT(captureFrame()));
     connect(controllerTimer, SIGNAL(timeout()), this, SLOT(readXboxController()));
@@ -70,7 +166,7 @@ void MainWindow::startCamera()
         return;
     }
 
-    cap.open("rtsp://admin:admin@192.168.1.10");
+    cap.open(0);
 
     if (!cap.isOpened()) {
         qDebug() << "Error: Could not open RTSP stream";
@@ -90,8 +186,8 @@ void MainWindow::stopCamera()
     videoTimer->stop();
     cap.release();
 
-    label1->clear();
-    label2->clear();
+    camRaw->clear();
+    camProc->clear();
 }
 
 void MainWindow::captureFrame()
@@ -105,18 +201,21 @@ void MainWindow::captureFrame()
 
     cv::cvtColor(frame, frame, cv::COLOR_BGR2RGB);
     QImage qimg(frame.data, frame.cols, frame.rows, frame.step, QImage::Format_RGB888);
+    Mat enhancedFrame = enhanceUnderwaterFrame(frame);
+    QImage qimgfinal(enhancedFrame.data, enhancedFrame.cols, enhancedFrame.rows, enhancedFrame.step, QImage::Format_RGB888);
 
-    label1->setPixmap(QPixmap::fromImage(qimg));
-    label2->setPixmap(QPixmap::fromImage(qimg));
+    camRaw->setPixmap(QPixmap::fromImage(qimg));
+    camProc->setPixmap(QPixmap::fromImage(qimgfinal));
 }
 
 void MainWindow::readXboxController()
 {
     DWORD result = XInputGetState(0, &controllerState);
     if (result == ERROR_SUCCESS) {
+        controllerStatusLabel->setText("Controller connected");
         processControllerInput();
     } else {
-        controllerStatusLabel->setText("Xbox controller not found or not connected");
+        controllerStatusLabel->setText("Controller not found or not connected");
     }
 }
 
@@ -129,7 +228,6 @@ int mapControllerToThruster(int controllerValue) {
     // Thruster range
     const int thrusterMin = 1200;
     const int thrusterMax = 1800;
-    const int thrusterNeutral = 1500;
 
     // Map the controller value to the range [-1, 1]
     double normalizedValue = (static_cast<double>(controllerValue) - controllerMin) / (controllerMax - controllerMin) * 2 - 1;
@@ -221,15 +319,15 @@ void MainWindow::processControllerInput()
     //     sendThrusterData();
     // }
 
-    // if (pad->wButtons & XINPUT_GAMEPAD_A) {
+    if (pad->wButtons & XINPUT_GAMEPAD_A) {
+        resetThrusterValues();
+        sendThrusterData();
+    }
+
+    // else{
     //     resetThrusterValues();
     //     sendThrusterData();
     // }
-
-    else{
-        resetThrusterValues();
-        sendThrusterData();
-        }
 }
 
 void MainWindow::resetThrusterValues()
@@ -260,13 +358,55 @@ void MainWindow::readESP()
 {
     while (udpSocket->hasPendingDatagrams()) {
         QByteArray datagram;
-        datagram.resize(int(udpSocket->pendingDatagramSize()));
+        datagram.resize(udpSocket->pendingDatagramSize());
         udpSocket->readDatagram(datagram.data(), datagram.size());
 
+        // Convert datagram to QString
         QString message = QString::fromUtf8(datagram);
 
-        QMetaObject::invokeMethod(this, [this, message]() {
-                controllerStatusLabel->setText(message);
+        // Split the message on every occurrence of "/"
+        QStringList parts = message.split('/');
+
+        // Use QMetaObject::invokeMethod to update UI in the main thread
+        QMetaObject::invokeMethod(this, [this, parts]() {
+                if (!parts.isEmpty()) {
+                    if (parts.size() > 0) {
+                        tempStatusLabel->setText(parts.at(0));
+                    } else {
+                        tempStatusLabel->clear();
+                    }
+
+                    if (parts.size() > 1) {
+                        pressureStatusLabel->setText(parts.at(1));
+                    } else {
+                        pressureStatusLabel->clear();
+                    }
+
+                    if (parts.size() > 4) {
+                        accStatusLabel->setText(parts.at(2) + ' ' + parts.at(3) + ' ' + parts.at(4));
+                    } else {
+                        accStatusLabel->clear();
+                    }
+
+                    if (parts.size() > 7) {
+                        gravityStatusLabel->setText(parts.at(5) + ' ' + parts.at(6) + ' ' + parts.at(7));
+                    } else {
+                        gravityStatusLabel->clear();
+                    }
+
+                    if (parts.size() > 10) {
+                        gyroStatusLabel->setText(parts.at(8) + ' ' + parts.at(9) + ' ' + parts.at(10));
+                    } else {
+                        gyroStatusLabel->clear();
+                    }
+
+                    if (parts.size() > 13) {
+                        magStatusLabel->setText(parts.at(11) + ' ' + parts.at(12) + ' ' + parts.at(13));
+                    } else {
+                        magStatusLabel->clear();
+                    }
+                }
+
             }, Qt::QueuedConnection);
     }
 }
